@@ -1,0 +1,9 @@
+[Unit]
+Description=ACME Cert Getter httpd reloader
+ConditionPathExists=/run/acg/httpd-reload
+
+[Service]
+Type=oneshot
+PrivateTmp=true
+ExecStart=/usr/bin/systemctl reload httpd.service
+ExecStart=/usr/bin/rm -f /run/acg/httpd-reload

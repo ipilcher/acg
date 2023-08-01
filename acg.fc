@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+#
+# Copyright 2023 Ian Pilcher <arequipeno@gmail.com>
+#
+# ACME Cert Getter - https://github.com/ipilcher/acg
+#
+
+/usr/(local/)?bin/acg		--	gen_context(system_u:object_r:acg_exec_t, s0)
+/var/run/acg(/.*)?			gen_context(system_u:object_r:acg_var_run_t, s0)
+/etc/acg(/.*)?				gen_context(system_u:object_r:acg_etc_t, s0)
+/var/lib/acg(/.*)?			gen_context(system_u:object_r:acg_var_lib_t, s0)
+/var/www/acme-challenge(/.*)?		gen_context(system_u:object_r:acg_httpd_content_t, s0)
+

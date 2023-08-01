@@ -1,0 +1,10 @@
+[Unit]
+Description=ACME Cert Getter httpd reloader
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+AccuracySec=30m
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

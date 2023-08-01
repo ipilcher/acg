@@ -1,0 +1,10 @@
+[Unit]
+Description=ACME (Let's Encrypt) Cert Getter for %I
+
+[Timer]
+OnCalendar=*-*-* 01:00:00
+AccuracySec=30m
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

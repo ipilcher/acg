@@ -1,0 +1,11 @@
+[Unit]
+Description=ACME (Let's Encrypt) Cert Getter for %I
+
+[Service]
+Type=oneshot
+PrivateTmp=true
+ExecStartPre=/usr/bin/cp /usr/bin/python3 /tmp/python.acg
+ExecStartPre=/usr/bin/chcon --reference=/usr/local/bin/acg /tmp/python.acg
+ExecStart=/tmp/python.acg /usr/local/bin/acg --production -d %I
+User=acg
+Group=acg
