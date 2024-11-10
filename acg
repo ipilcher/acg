@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 #
-# Copyright 2023 Ian Pilcher <arequipeno@gmail.com>
+# Copyright 2023, 2024 Ian Pilcher <arequipeno@gmail.com>
 #
 # ACME Cert Getter - https://github.com/ipilcher/acg
 #
@@ -12,7 +12,8 @@ import acme.client
 import acme.messages
 import argparse
 import base64
-import cryptography
+import cryptography.hazmat.primitives.serialization as serialization
+import cryptography.x509 as x509
 import datetime
 import errno
 import josepy
@@ -33,7 +34,6 @@ LE_URLS = [
     'https://acme-v02.api.letsencrypt.org/directory'
 ]
 
-CRYPTO_BACKEND = cryptography.hazmat.backends.default_backend()
 LOGGER = logging.getLogger(__name__)
 
 
@@ -79,7 +79,7 @@ def logging_init(args):
     else:
         LOGGER.addHandler(logging.handlers.SysLogHandler(address='/dev/log'))
 
-    LOGGER.debug('Logging to {0}'.format('STDERR' if args.tty else 'SYSLOG'))
+    LOGGER.debug(f'Logging to {"STDERR" if args.tty else "SYSLOG"}')
 
 
 #
@@ -88,36 +88,29 @@ def logging_init(args):
 
 def check_cert_life(hostname, min_days):
 
-    cert_filename = '{0}/{1}.crt'.format(STATE_DIR, hostname)
+    cert_filename = f'{STATE_DIR}/{hostname}.crt'
 
     try:
         with open(cert_filename, 'rb') as cert_file:
-            cert = cryptography.x509.load_pem_x509_certificate(
-                cert_file.read(), CRYPTO_BACKEND
-            )
+            cert = x509.load_pem_x509_certificate(cert_file.read())
     except EnvironmentError as e:
         if e.errno == errno.ENOENT:
-            LOGGER.info(
-                'No existing certificate found for {0}'.format(hostname)
-            )
+            LOGGER.info(f'No existing certificate found for {hostname}')
             return
         else:
             raise
 
-    cert_life = cert.not_valid_after - datetime.datetime.utcnow()
+    cert_life = cert.not_valid_after_utc - datetime.datetime.now(datetime.UTC)
 
     if cert_life > datetime.timedelta(days=min_days):
         LOGGER.info(
-            'Certificate for {0} has {1} days remaining; exiting'.format(
-                hostname, cert_life.days
-            )
+            f'Certificate for {hostname} has {cert_life.days} remaining; '
+            'exiting'
         )
         sys.exit(0)
 
     LOGGER.debug(
-        'Certificate for {0} has {1} days remaining'.format(
-            hostname, cert_life.days
-        )
+        f'Certificate for {hostname} has {cert_life.days} days remaining'
     )
 
 
@@ -127,18 +120,14 @@ def check_cert_life(hostname, min_days):
 
 def load_client_key(hostname):
 
-    key_filename = '{0}/private/{1}-acme-client.key'.format(
-        CONFIG_DIR, hostname
-    )
+    key_filename = f'{CONFIG_DIR}/private/{hostname}-acme-client.key'
 
     with open(key_filename, 'rb') as key_file:
         key_pem = key_file.read()
 
-    rsakey = cryptography.hazmat.primitives.serialization.load_pem_private_key(
-        key_pem, backend=CRYPTO_BACKEND, password=None
-    )
+    rsakey = serialization.load_pem_private_key(key_pem, None)
     jwk = josepy.JWKRSA(key=rsakey)
-    LOGGER.debug('Loaded client key from {0}'.format(key_filename))
+    LOGGER.debug(f'Loaded client key from {key_filename}')
     return jwk
 
 
@@ -149,20 +138,20 @@ def load_client_key(hostname):
 def get_account_uri(jwk, hostname, production):
 
     if production:
-        uri_filename = '{0}/{1}-account'.format(STATE_DIR, hostname)
+        uri_filename = f'{STATE_DIR}/{hostname}-account'
     else:
-        uri_filename = '{0}/{1}-staging-account'.format(STATE_DIR, hostname)
+        uri_filename = f'{STATE_DIR}/{hostname}-staging-account'
 
     try:
         with open(uri_filename, 'r') as uri_file:
             uri = uri_file.read()
-            LOGGER.debug('Loaded account URI from {0}'.format(uri_filename))
+            LOGGER.debug(f'Loaded account URI from {uri_filename}')
             return uri
     except EnvironmentError as e:
         if e.errno != errno.ENOENT:
             raise
 
-    LOGGER.debug('Account URI cache ({0}) not present'.format(uri_filename))
+    LOGGER.debug(f'Account URI cache ({uri_filename}) not present')
 
     # https://community.letsencrypt.org/t/acme-python-clientv2-not-able-to-renew-a-certificate-without-enrolling-new-account/103452/3
     reg = acme.messages.NewRegistration(
@@ -177,12 +166,12 @@ def get_account_uri(jwk, hostname, production):
         client._post(directory['newAccount'], reg)
     )
 
-    LOGGER.debug('Got account URI: {0}'.format(regr.uri))
+    LOGGER.debug(f'Got account URI: {regr.uri}')
 
     with open(uri_filename, 'w') as uri_file:
         uri_file.write(regr.uri)
 
-    LOGGER.debug('Cached account URI at {0}'.format(uri_filename))
+    LOGGER.debug(f'Cached account URI at {uri_filename}')
 
     return regr.uri
 
@@ -208,12 +197,12 @@ def create_client(jwk, acct_uri, production):
 
 def load_csr(hostname):
 
-    csr_filename = '{0}/{1}.csr'.format(STATE_DIR, hostname)
+    csr_filename = f'{STATE_DIR}/{hostname}.csr'
 
     with open(csr_filename, 'rb') as csr_file:
         csr = csr_file.read()
 
-    LOGGER.debug('Loaded CSR for {0} from {1}'.format(hostname, csr_filename))
+    LOGGER.debug(f'Loaded CSR for {hostname} from {csr_filename}')
 
     return csr
 
@@ -242,40 +231,33 @@ def execute_challenge(client, csr, hostname):
     challenge = get_http01_challenge(order)
     response, validation = challenge.response_and_validation(client.net.key)
 
-    validation_filename = '{0}/{1}'.format(
-        CHALLENGE_DIR, challenge.path.split('/')[-1]
-    )
+    validation_filename = f'{CHALLENGE_DIR}/{challenge.path.split('/')[-1]}'
 
     with open(validation_filename, 'w') as validation_file:
         validation_file.write(validation)
 
-    LOGGER.debug('Wrote validation file to {0}'.format(validation_filename))
+    LOGGER.debug(f'Wrote validation file to {validation_filename}')
 
     client.answer_challenge(challenge, response)
     order = client.poll_and_finalize(order)
 
     if order.body.status != acme.messages.STATUS_VALID:
-        raise Exception(
-            'Order status ({0}) is not VALID'.format(order.body.status.name)
-        )
+        raise Exception(f'Order status ({order.body.status.name} is not VALID')
 
     LOGGER.debug('Got VALID order from ACME server')
 
     os.remove(validation_filename)
 
-    LOGGER.debug('Removed validation file ({0})'.format(validation_filename))
+    LOGGER.debug(f'Removed validation file ({validation_filename})')
 
     # This assumes that the server certificate is first in the PEM chain
     fullchain_pem = order.fullchain_pem.encode('ascii')
-    cert = cryptography.x509.load_pem_x509_certificate(
-        fullchain_pem, backend=CRYPTO_BACKEND
-    )
+    cert = x509.load_pem_x509_certificate(fullchain_pem)
 
-    cn = cert.subject.get_attributes_for_oid(
-        cryptography.x509.oid.NameOID.COMMON_NAME)[0].value
-    assert cn == hostname
+    cn = cert.subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)[0]
+    assert cn.value == hostname
 
-    LOGGER.debug('Got certificate for {0}'.format(hostname))
+    LOGGER.debug(f'Got certificate for {hostname}')
 
     return cert
 
@@ -286,20 +268,16 @@ def execute_challenge(client, csr, hostname):
 
 def write_certificate(cert, hostname):
 
-    cert_filename = '{0}/{1}.crt'.format(STATE_DIR, hostname)
+    cert_filename = f'{STATE_DIR}/{hostname}.crt'
 
     with open(cert_filename, 'wb') as cert_file:
-        cert_file.write(
-            cert.public_bytes(
-                cryptography.hazmat.primitives.serialization.Encoding.PEM
-            )
-        )
+        cert_file.write(cert.public_bytes(serialization.Encoding.PEM))
 
+    LOGGER.info(f'Wrote new certificate for {hostname} to {cert_filename}')
     LOGGER.info(
-        'Wrote new certificate for {0} to {1}'.format(hostname, cert_filename)
+        'New certificate valid until '
+        f'{cert.not_valid_after_utc:%Y-%m-%d %H:%M:%S %Z}'
     )
-    LOGGER.info(
-        'New certificate valid until {0} UTC'.format(cert.not_valid_after)
 
 
 def main():

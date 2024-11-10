@@ -1,6 +1,6 @@
 # ACME Cert Getter
 
-&copy; 2023 Ian Pilcher <<arequipeno@gmail.com>>
+&copy; 2023, 2024 Ian Pilcher <<arequipeno@gmail.com>>
 
 A simple ACME (Let's Encrypt) client that manages a single certificate and
 reloads Apache (`httpd`) when necessary.
