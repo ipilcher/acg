@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 #
-# Copyright 2023, 2024 Ian Pilcher <arequipeno@gmail.com>
+# Copyright 2023, 2024, 2025 Ian Pilcher <arequipeno@gmail.com>
 #
 # ACME Cert Getter - https://github.com/ipilcher/acg
 #
@@ -12,7 +12,8 @@ import acme.client
 import acme.messages
 import argparse
 import base64
-import cryptography.hazmat.primitives.serialization as serialization
+import cryptography.hazmat.primitives.serialization as s11n
+import cryptography.hazmat.primitives.serialization.pkcs12 as pkcs12
 import cryptography.x509 as x509
 import datetime
 import errno
@@ -57,6 +58,18 @@ def parse_args():
     )
     parser.add_argument(
         '-f', '--force', help='force refresh (ignore existing certificate)',
+        action='store_true'
+    )
+    parser.add_argument(
+        '-a', '--apache-flag', help='write httpd restart flag file',
+        action='store_true'
+    )
+    parser.add_argument(
+        '-n', '--hostname-flag', help='write host-specific restart flag file',
+        action='store_true'
+    )
+    parser.add_argument(
+        '-p', '--pkcs12', help='write PKCS#12 file (in addition to PEM file)',
         action='store_true'
     )
     parser.add_argument(
@@ -125,7 +138,7 @@ def load_client_key(hostname):
     with open(key_filename, 'rb') as key_file:
         key_pem = key_file.read()
 
-    rsakey = serialization.load_pem_private_key(key_pem, None)
+    rsakey = s11n.load_pem_private_key(key_pem, None)
     jwk = josepy.JWKRSA(key=rsakey)
     LOGGER.debug(f'Loaded client key from {key_filename}')
     return jwk
@@ -263,21 +276,43 @@ def execute_challenge(client, csr, hostname):
 
 
 #
-#    Write the new certificate
+#    Write the new certificate as a PEM file
 #
 
-def write_certificate(cert, hostname):
+def write_cert_pem(cert, hostname):
 
     cert_filename = f'{STATE_DIR}/{hostname}.crt'
 
     with open(cert_filename, 'wb') as cert_file:
-        cert_file.write(cert.public_bytes(serialization.Encoding.PEM))
+        cert_file.write(cert.public_bytes(s11n.Encoding.PEM))
 
     LOGGER.info(f'Wrote new certificate for {hostname} to {cert_filename}')
     LOGGER.info(
         'New certificate valid until '
         f'{cert.not_valid_after_utc:%Y-%m-%d %H:%M:%S %Z}'
     )
+
+
+#
+#   Write the new certificate (and its key) as a PKCS#12 file
+#
+
+def write_cert_pkcs12(cert, hostname):
+
+    key_filename = f'{STATE_DIR}/private/{hostname}.key'
+    with open(key_filename, 'rb') as key_file:
+        key = s11n.load_pem_private_key(key_file.read(), None)
+    LOGGER.debug(f'Read private key from {key_filename}')
+
+    host_bytes = hostname.encode('utf-8')
+    p12 = pkcs12.serialize_key_and_certificates(
+        host_bytes, key, cert, None, s11n.BestAvailableEncryption(host_bytes)
+    )
+
+    p12_filename = f'{STATE_DIR}/{hostname}.p12'
+    with open(p12_filename, 'wb') as p12_file:
+        p12_file.write(p12)
+    LOGGER.info(f'Wrote new certificate for {hostname} to {p12_filename}')
 
 
 def main():
@@ -293,8 +328,19 @@ def main():
     acct_uri = get_account_uri(client_key, args.hostname, args.production)
     client = create_client(client_key, acct_uri, args.production)
     cert = execute_challenge(client, csr, args.hostname)
-    write_certificate(cert, args.hostname)
-    open('/run/acg/httpd-reload', 'a')
+    write_cert_pem(cert, args.hostname)
+
+    if args.pkcs12:
+        write_cert_pkcs12(cert, args.hostname)
+
+    if args.apache_flag:
+        open('/run/acg/httpd-reload', 'a')
+        LOGGER.info('Wrote Apache reload flag file: /run/acg/httpd-reload')
+
+    if args.hostname_flag:
+        flag_filename = f'/run/acg/{args.hostname}-reload'
+        open(flag_filename, 'a')
+        LOGGER.info(f'Wrote host-specific reload flag file: {flag_filename}')
 
     LOGGER.info('Great success!')
 
